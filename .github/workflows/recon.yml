@@ -1,0 +1,256 @@
+name: 🕵️ joe-lastrecon — Full Recon Pipeline
+
+on:
+  repository_dispatch:
+    types: [recon]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Domain or comma-separated domains'
+        required: true
+        type: string
+      depth:
+        description: 'Scan depth (fast/full)'
+        required: false
+        default: 'fast'
+        type: choice
+        options:
+          - fast
+          - full
+
+env:
+  GO_VERSION: '1.22'
+  TOOLS_CACHE_VERSION: 'v5'
+
+jobs:
+  recon:
+    name: 🔍 Full Recon Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      # ─────────────────────────────────────────────
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      # ─────────────────────────────────────────────
+      - name: 🐹 Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      # ─────────────────────────────────────────────
+      - name: 📦 Cache Go Tools
+        id: cache-tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-recon-tools-${{ env.TOOLS_CACHE_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-go-recon-tools-
+
+      # ─────────────────────────────────────────────
+      - name: 🔧 Install Go Tools (if not cached)
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        run: |
+          echo "📦 Installing Go recon tools..."
+          
+          install_go_tool() {
+            echo "  → Installing $1"
+            go install "$1" 2>/dev/null || echo "  ⚠️ Failed: $1"
+          }
+
+          # Core subdomain tools
+          install_go_tool github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          install_go_tool github.com/tomnomnom/assetfinder@latest
+          install_go_tool github.com/projectdiscovery/alterx/cmd/alterx@latest
+          install_go_tool github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+          install_go_tool github.com/projectdiscovery/httpx/cmd/httpx@latest
+          install_go_tool github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+          install_go_tool github.com/projectdiscovery/katana/cmd/katana@latest
+          install_go_tool github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          install_go_tool github.com/projectdiscovery/asnmap/cmd/asnmap@latest
+          install_go_tool github.com/projectdiscovery/chaos-client/cmd/chaos@latest
+          install_go_tool github.com/hakluke/hakrawler@latest
+          install_go_tool github.com/lc/gau/v2/cmd/gau@latest
+          install_go_tool github.com/hueristiq/xurlfind3r/cmd/xurlfind3r@latest
+          install_go_tool github.com/tomnomnom/gf@latest
+          install_go_tool github.com/tomnomnom/anew@latest
+          install_go_tool github.com/tomnomnom/waybackurls@latest
+          install_go_tool github.com/tomnomnom/uro@latest
+          install_go_tool github.com/hahwul/dalfox/v2@latest
+          install_go_tool github.com/Emoe/kxss@latest
+          install_go_tool github.com/KathanP19/Gxss@latest
+          install_go_tool github.com/tomnomnom/qsreplace@latest
+          install_go_tool github.com/LukaSikic/subzy@latest
+          install_go_tool github.com/gwen001/github-subdomains@latest
+          install_go_tool github.com/incogbyte/shosubgo@latest
+          install_go_tool github.com/ffuf/ffuf/v2@latest
+          
+          echo "✅ Go tools installed"
+          ls ~/go/bin/
+
+      # ─────────────────────────────────────────────
+      - name: 🔧 Install System Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            nmap masscan curl python3 python3-pip \
+            ruby ruby-dev build-essential libcurl4-openssl-dev \
+            dnsutils whois jq 2>/dev/null || true
+
+          # Python tools
+          pip3 install -q dirsearch arjun 2>/dev/null || true
+          
+          # WPScan
+          sudo gem install wpscan --quiet 2>/dev/null || true
+          
+          # Findomain
+          curl -sLO "https://github.com/findomain/findomain/releases/latest/download/findomain-linux-i386.zip" 2>/dev/null && \
+            unzip -oq findomain-linux-i386.zip && \
+            sudo mv findomain /usr/local/bin/ && \
+            sudo chmod +x /usr/local/bin/findomain || true
+          
+          # Amass
+          go install github.com/owasp-amass/amass/v4/...@latest 2>/dev/null || true
+          
+          # Aquatone
+          curl -sL "https://github.com/michenriksen/aquatone/releases/latest/download/aquatone_linux_amd64_1.7.0.zip" -o aquatone.zip 2>/dev/null && \
+            unzip -oq aquatone.zip && sudo mv aquatone /usr/local/bin/ || true
+          
+          # GF patterns
+          mkdir -p ~/.gf
+          git clone -q https://github.com/tomnomnom/gf.git /tmp/gf-repo 2>/dev/null && \
+            cp /tmp/gf-repo/examples/*.json ~/.gf/ 2>/dev/null || true
+          git clone -q https://github.com/1ndianl33t/Gf-Patterns.git /tmp/gf-extra 2>/dev/null && \
+            cp /tmp/gf-extra/*.json ~/.gf/ 2>/dev/null || true
+          
+          # Nuclei templates
+          nuclei -update-templates -silent 2>/dev/null || true
+          
+          echo "✅ System tools ready"
+
+      # ─────────────────────────────────────────────
+      - name: ⚙️ Setup API Config (provider.yaml)
+        env:
+          SHODAN_API_KEY:      ${{ secrets.SHODAN_API_KEY }}
+          CHAOS_KEY:           ${{ secrets.CHAOS_KEY }}
+          VIRUSTOTAL_API_KEY:  ${{ secrets.VIRUSTOTAL_API_KEY }}
+          GITHUB_RECON_TOKEN:  ${{ secrets.GITHUB_RECON_TOKEN }}
+          CENSYS_API_ID:       ${{ secrets.CENSYS_API_ID }}
+          CENSYS_API_SECRET:   ${{ secrets.CENSYS_API_SECRET }}
+          BINARYEDGE_KEY:      ${{ secrets.BINARYEDGE_KEY }}
+          SECURITYTRAILS_KEY:  ${{ secrets.SECURITYTRAILS_KEY }}
+          FOFA_EMAIL:          ${{ secrets.FOFA_EMAIL }}
+          FOFA_KEY:            ${{ secrets.FOFA_KEY }}
+        run: |
+          mkdir -p ~/.config/subfinder
+          cat > ~/.config/subfinder/provider-config.yaml <<EOF
+          binaryedge:
+            - ${BINARYEDGE_KEY:-}
+          chaos:
+            - ${CHAOS_KEY:-}
+          censys:
+            - ${CENSYS_API_ID:-}:${CENSYS_API_SECRET:-}
+          securitytrails:
+            - ${SECURITYTRAILS_KEY:-}
+          shodan:
+            - ${SHODAN_API_KEY:-}
+          virustotal:
+            - ${VIRUSTOTAL_API_KEY:-}
+          fofa:
+            - ${FOFA_EMAIL:-}:${FOFA_KEY:-}
+          github:
+            - ${GITHUB_RECON_TOKEN:-}
+          EOF
+          
+          # For recon script
+          cat > provider.yaml <<EOF
+          binaryedge: [${BINARYEDGE_KEY:-}]
+          chaos: [${CHAOS_KEY:-}]
+          censys: ["${CENSYS_API_ID:-}:${CENSYS_API_SECRET:-}"]
+          securitytrails: [${SECURITYTRAILS_KEY:-}]
+          shodan: [${SHODAN_API_KEY:-}]
+          virustotal: [${VIRUSTOTAL_API_KEY:-}]
+          github: [${GITHUB_RECON_TOKEN:-}]
+          fofa: ["${FOFA_EMAIL:-}:${FOFA_KEY:-}"]
+          EOF
+
+          echo "✅ Provider config written"
+
+      # ─────────────────────────────────────────────
+      - name: 📋 Prepare Domain List
+        id: prep
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          mkdir -p /tmp/recon_input
+          
+          # Get input from repository_dispatch or workflow_dispatch
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            DOMAINS=$(echo '${{ github.event.client_payload.domains }}' | tr -d '"')
+            BATCH_ID=$(echo '${{ github.event.client_payload.batch_id }}' | tr -d '"')
+            TOTAL_BATCHES=$(echo '${{ github.event.client_payload.total_batches }}' | tr -d '"')
+          else
+            DOMAINS="${{ github.event.inputs.target }}"
+            BATCH_ID="1"
+            TOTAL_BATCHES="1"
+          fi
+          
+          # Write domain list
+          echo "$DOMAINS" | tr ',' '\n' | sed 's/^ *//;s/ *$//;/^$/d' > /tmp/recon_input/domains.txt
+          TOTAL=$(wc -l < /tmp/recon_input/domains.txt)
+          
+          echo "total_domains=$TOTAL" >> $GITHUB_OUTPUT
+          echo "batch_id=$BATCH_ID" >> $GITHUB_OUTPUT
+          echo "total_batches=$TOTAL_BATCHES" >> $GITHUB_OUTPUT
+          echo "domain_preview=$(head -3 /tmp/recon_input/domains.txt | tr '\n' ',' | sed 's/,$//')" >> $GITHUB_OUTPUT
+          
+          echo "📋 Domains to scan: $TOTAL (Batch $BATCH_ID/$TOTAL_BATCHES)"
+          cat /tmp/recon_input/domains.txt
+
+      # ─────────────────────────────────────────────
+      - name: 🚀 Run Recon Pipeline
+        env:
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHODAN_API_KEY:      ${{ secrets.SHODAN_API_KEY }}
+          VIRUSTOTAL_API_KEY:  ${{ secrets.VIRUSTOTAL_API_KEY }}
+          CHAOS_KEY:           ${{ secrets.CHAOS_KEY }}
+          GITHUB_RECON_TOKEN:  ${{ secrets.GITHUB_RECON_TOKEN }}
+        run: |
+          export PATH="$PATH:$HOME/go/bin:/usr/local/bin"
+          chmod +x scripts/recon_runner.sh scripts/telegram_notify.sh
+          
+          bash scripts/recon_runner.sh \
+            "$(cat /tmp/recon_input/domains.txt | tr '\n' ',')" \
+            "/tmp/recon_input/domains.txt" \
+            "${{ github.run_id }}"
+
+      # ─────────────────────────────────────────────
+      - name: 📤 Upload All Results as Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recon-results-${{ github.run_id }}-batch${{ steps.prep.outputs.batch_id }}
+          path: /tmp/recon_results/
+          retention-days: 7
+
+      # ─────────────────────────────────────────────
+      - name: 📊 GitHub Step Summary
+        if: always()
+        run: |
+          echo "## 🕵️ joe-lastrecon Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Targets | \`${{ steps.prep.outputs.domain_preview }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📋 Domains | ${{ steps.prep.outputs.total_domains }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔢 Batch | ${{ steps.prep.outputs.batch_id }} / ${{ steps.prep.outputs.total_batches }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏰ Run ID | ${{ github.run_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> 📥 Download results from **Artifacts** above" >> $GITHUB_STEP_SUMMARY
