@@ -1,0 +1,35 @@
+# Subfinder Provider Config Template
+# ════════════════════════════════════════════════════════
+# Copy this to ~/.config/subfinder/provider-config.yaml
+# OR let the GitHub Action generate it from Secrets
+# ════════════════════════════════════════════════════════
+
+binaryedge:
+  - YOUR_BINARYEDGE_KEY        # https://app.binaryedge.io/
+
+censys:
+  - YOUR_CENSYS_ID:YOUR_CENSYS_SECRET  # https://search.censys.io/
+
+chaos:
+  - YOUR_CHAOS_KEY             # https://chaos.projectdiscovery.io/
+
+securitytrails:
+  - YOUR_SECURITYTRAILS_KEY   # https://securitytrails.com/
+
+shodan:
+  - YOUR_SHODAN_KEY            # https://account.shodan.io/
+
+virustotal:
+  - YOUR_VIRUSTOTAL_KEY        # https://www.virustotal.com/gui/my-apikey
+
+fofa:
+  - YOUR_FOFA_EMAIL:YOUR_FOFA_KEY  # https://fofa.info/
+
+github:
+  - YOUR_GITHUB_PAT            # For github-subdomains tool
+
+zoomeye:
+  - YOUR_ZOOMEYE_KEY           # https://www.zoomeye.org/
+
+fullhunt:
+  - YOUR_FULLHUNT_KEY          # https://fullhunt.io/
